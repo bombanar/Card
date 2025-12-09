@@ -1,0 +1,63 @@
+{
+  "screen_width": 1920,
+  "screen_height": 1080,
+  "card_width": 150,
+  "card_height": 205,
+  "border_margin": 10,
+  "hand_height": 900,
+  "board_height": 590,
+  "enemy_hand_height": 10,
+  "enemy_board_height": 300,
+  "shop":
+  {
+    "x": 1750,
+    "y": 240
+  },
+  "end_turn":
+  {
+    "x1": 100,
+    "x2": 400,
+    "y1": 400,
+    "y2": 600
+  },
+  "power":
+  {
+    "ally_x": 170,
+    "ally_y": 600,
+    "enemy_x": 170,
+    "enemy_y": 380
+  },
+  "money":
+  {
+    "x": 1750,
+    "y": 100
+  },
+  "score":
+  {
+    "x": 100,
+    "y": 100
+  },
+  "font_size": 50,
+  "playfield":
+  {
+    "x1": 100,
+    "x2": 1800,
+    "y1": 100,
+    "y2": 800
+  },
+  "card_collection":
+  {
+    "x1": 100,
+    "x2": 1800,
+    "y1": 800,
+    "y2": 900
+  },
+  "rarity_rows":
+  {
+    "bronze": 500,
+    "silver": 300,
+    "gold": 100
+  },
+  "scroll_speed": 100
+
+}

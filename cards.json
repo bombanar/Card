@@ -1,0 +1,56 @@
+{
+  "Dawid Shlaubgman":
+  {
+    "rarity": "bronze",
+    "fraction" : "Żydzi",
+    "power": 2,
+    "cost": 2,
+    "description": "Ukradnij swojemu przeciwnikowi 3 golda.",
+    "counter": 1,
+    "on_count":
+    {
+      "gain_money": 3,
+      "reduce_enemy_money": 3
+    }
+  },
+  "steal":
+  {
+    "rarity": "bronze",
+    "fraction" : "Żydzi",
+    "power": 0,
+    "cost": 2,
+    "description": "Ukradnij kartę ze sklepu.",
+    "counter": 1,
+    "on_count":
+    {
+      "buy_free": 1
+    }
+  },
+  "jewish banker":
+  {
+    "rarity": "bronze",
+    "fraction" : "Żydzi",
+    "power": 6,
+    "cost": 6,
+    "description": "\"Zarób\" 2 złota",
+    "counter": 1,
+    "on_count":
+    {
+      "gain_money": 2
+    }
+  },
+  "noah the rich":
+  {
+    "rarity": "bronze",
+    "fraction" : "Żydzi",
+    "power": 2,
+    "cost": 4,
+    "description": "Co ture rośnie w siłe o 2 i zabiera ci 1 gold",
+    "counter": 1000,
+    "on_count":
+    {
+      "grow": 2,
+      "lose_money": 1
+    }
+  }
+}
