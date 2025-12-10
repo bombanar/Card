@@ -87,6 +87,7 @@ def main(HOST_IP):
     board = []
     shop = []
     enemy_board = []
+    spell_stack = []
 
     # --- 2. BOARD STATE TRACKING FOR SENDING ---
     # Used to determine if the local board has changed and needs to be sent.
@@ -115,14 +116,19 @@ def main(HOST_IP):
     placeholder_on = None
     last_left_mb_state = False
     end_turn = False
+    enemy_turn_end = False
+    end_round = False
+    enemy_round_end = False
     score = 0
 
     player_power = 0
     money_delta = 0
     enemy_power = 0
-    money = 100
+    basic_income = 3
+    money = 5
     id = 1000
-    buy_free = 1
+    buy_free = 0
+    targeting = False
 
     images = sysf.load_and_scale_images('cache/card_imgs')
     background = pygame.image.load('cache/background.png')
@@ -154,41 +160,91 @@ def main(HOST_IP):
                 enemy_money = incoming_data.get('money')
                 money += incoming_data.get('money_delta')
 
+            elif incoming_data.get('type') == 'end_turn':
+                enemy_turn_end = True
 
-            elif incoming_data.get('type') == 'end_turn' and end_turn == True:
-                for i, card in enumerate(board):
-                    if card.get_counter() > 0:
-                        card.tick_counter()
-                        for act in cards[card.get_name()]["on_count"].keys():
-                            value = cards[card.get_name()]["on_count"][act]
-                            if act == "gain_money":
-                                money += value
-                            if act == "reduce_enemy_money":
-                                money_delta -= value
-                            if act == "steal_from_shop":
-                                buy_free += value
-                            if act == "lose_money":
-                                money -= value
-                            if act == "grow":
-                                card.set_power(card.get_power() + value)
-                    if card.get_power() < 1:
-                        board.pop(i)
+            elif incoming_data.get('type') == 'spellcast':
+                spell_stack.append([incoming_data.get('spell'), incoming_data.get('target')])
+                print(spell_stack)
 
-
-                net.send_board_update(board, len(hand), money, money_delta)
-                player_power = sysf.power_of(board)
-                enemy_power = sysf.power_of(enemy_board)
-                if enemy_power > player_power:
-                    score -= 1
-                elif enemy_power < player_power:
-                    score += 1
-                end_turn = False
-                money_delta = 0
+            elif incoming_data.get('type') == 'end_round':
+                enemy_round_end = True
 
         except queue.Empty:
             # No new messages, just continue the game loop
             pass
         # --- END RECEIVING LOGIC ---
+
+        if end_round:
+            end_turn = True
+            net.send_end_turn()
+            net.send_end_round()
+
+        if end_round and enemy_round_end:
+            player_power = sysf.power_of(board)
+            enemy_power = sysf.power_of(enemy_board)
+            if enemy_power > player_power:
+                score -= 1
+            elif enemy_power < player_power:
+                score += 1
+            board = []
+            end_round = False
+            enemy_round_end = False
+            end_turn = False
+            enemy_turn_end = False
+
+        if enemy_turn_end and end_turn:
+            money += basic_income
+            for i, card in enumerate(board):
+                if card.get_power() < 1:
+                    board.pop(i)
+                if card.get_counter() > 0:
+                    card.tick_counter()
+                    for act in cards[card.get_name()]["on_count"].keys():
+                        value = cards[card.get_name()]["on_count"][act]
+                        if act == "gain_money":
+                            money += value
+                        if act == "reduce_enemy_money":
+                            money_delta -= value
+                        if act == "buy_free":
+                            buy_free += value
+                        if act == "lose_money":
+                            money -= value
+                        if act == "grow":
+                            card.set_power(card.get_power() + value)
+                        if act == "recruit":
+                            if value in deck:
+                                board.insert(i+1, sysf.make_card(value, id))
+                                board[i+1].set_scale(1.2)
+                                id += 1
+                                deck.remove(value)
+
+            for spell in spell_stack:
+                for act in cards[spell[0]]["on_count"].keys():
+                    value = cards[spell[0]]["on_count"][act]
+
+                    print(act, value)
+
+                    if act == "dmg":
+                        for card in board:
+                            if card.get_index() == spell[1]:
+                                card.set_power(card.get_power() - value)
+                    if act == "gain_money":
+                        money += value
+                    if act == "reduce_enemy_money":
+                        money_delta -= value
+                    if act == "buy_free":
+                        buy_free += value
+                    if act == "lose_money":
+                        money -= value
+
+            spell_stack = []
+
+
+            net.send_board_update(board, len(hand), money, money_delta)
+            end_turn = False
+            enemy_turn_end = False
+            money_delta = 0
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -206,7 +262,23 @@ def main(HOST_IP):
             hand[col].set_scale(1.2)
 
         if end_turn == False:
-            if pygame.mouse.get_pressed()[0] == 1 and (col > -1 or dragged != None):
+            if targeting == True:
+                if pygame.mouse.get_pressed()[0] == 1:
+                    col = int(sysf.collision(board))
+                    if col > -1:
+                        spell_stack[-1][1] = board[col].get_index()
+                        targeting = False
+                    else:
+                        col = int(sysf.collision(enemy_board))
+                        if col > -1:
+                            net.send_spell(spell_stack[-1][0], enemy_board[col].get_index())
+                            targeting = False
+
+                    if col > -1:
+                        end_turn = True
+
+
+            elif pygame.mouse.get_pressed()[0] == 1 and (col > -1 or dragged != None):
                 # ... (Dragging logic - Placeholder manipulation)
                 if dragged == None:
                     dragged = col
@@ -217,7 +289,7 @@ def main(HOST_IP):
                 hand[dragged].set_y(m_pos[1] + drag_y)
 
                 # Placeholder insertion/removal logic...
-                if 100 < m_pos[0] < 1800 and 100 < m_pos[1] < 800:
+                if playfield['x1'] < m_pos[0] < playfield['x2'] and playfield['y1'] < m_pos[1] < playfield['y2']:
                     last_placeholder = placeholder_on
                     if placeholder_on == None:
                         board.append(placeholder)
@@ -251,13 +323,21 @@ def main(HOST_IP):
             elif dragged != None:
                 if playfield['x1'] < m_pos[0] < playfield['x2'] and playfield['y1'] < m_pos[1] < playfield['y2'] and placeholder_on != None:
                     # --- Card successfully placed on board (BOARD CHANGED) ---
-
                     hand[dragged].set_status("board")
                     hand[dragged].set_scale(1.2)
                     board.pop(placeholder_on)
+                    if cards[hand[dragged].get_name()]["targeting"] == 1:
+                        spell_stack.append([hand[dragged].get_name(), -1])
+                        targeting = True
+                    elif cards[hand[dragged].get_name()]["targeting"] == 2:
+                        spell_stack.append([hand[dragged].get_name(), -1])
+                        end_turn = True
+                    else:
+                        end_turn = True
                     board.insert(placeholder_on, hand[dragged])
                     hand.pop(dragged)
                     placeholder_on = None
+
                 else:
                     # Card returned to hand
                     hand[dragged].set_status("hand")
@@ -285,8 +365,8 @@ def main(HOST_IP):
                     else:
                         shop.pop(col)
 
-            if sysf.end_turn(m_pos) and pygame.mouse.get_pressed()[0] == 1 and last_left_mb_state == False:
-                end_turn = True
+            if sysf.end_round(m_pos) and pygame.mouse.get_pressed()[0] == 1 and last_left_mb_state == False:
+                end_round = True
 
         # --- 3. SENDING LOGIC (Check and send own board updates) ---
         # Current state of the board, represented by a list of card IDs (excluding placeholder)

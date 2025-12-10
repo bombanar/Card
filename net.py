@@ -115,7 +115,6 @@ def start_client(host_ip, host_port):
     except Exception as e:
         print(f"Connection failed: {e}")
 
-
 def send_board_update(board, len_enemy_hand, money, money_delta):
     """
     Public function for the Main Game Loop to call when the board changes.
@@ -134,5 +133,19 @@ def send_board_update(board, len_enemy_hand, money, money_delta):
 def send_end_turn():
     message_dict = {
         'type': 'end_turn'
+    }
+    OUTGOING_QUEUE.put(message_dict)
+
+def send_end_round():
+    message_dict = {
+        'type': 'end_round'
+    }
+    OUTGOING_QUEUE.put(message_dict)
+
+def send_spell(spell, target):
+    message_dict = {
+        'type': 'spellcast',
+        'spell': spell,
+        'target': target
     }
     OUTGOING_QUEUE.put(message_dict)

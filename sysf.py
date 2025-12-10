@@ -176,7 +176,7 @@ def collision(hand):
             return i
     return -1
 
-def end_turn(pos):
+def end_round(pos):
     if not (end_turn_collider['x1'] <= pos[0] < end_turn_collider['x2']):
         return False
     if not (end_turn_collider['y1'] <= pos[1] < end_turn_collider['y2']):
