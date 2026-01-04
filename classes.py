@@ -44,6 +44,10 @@ class Card:
         return self.cost
     def get_counter(self):
         return self.counter
+    def get_height(self):
+        return card_height * self.scale
+    def get_width(self):
+        return card_width * self.scale
 
     def set_status(self, status):
         self.status = status

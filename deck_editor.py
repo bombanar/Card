@@ -16,6 +16,8 @@ def main():
     SCREEN_WIDTH = config['screen_width']
     SCREEN_HEIGHT = config['screen_height']
 
+    row_height = config['rarity_rows']
+
     scroll_speed = config['scroll_speed'] * mp
 
     pygame.init()
@@ -64,19 +66,27 @@ def main():
             card.set_x(card.get_dims()[0] + shift_x)
 
         col = sysf.collision(collection)
+        for card in collection:
+            card.set_scale(1)
+        if col > -1:
+            collection[col].set_scale(1.2)
         if click and not last_click and col > -1:
             rows[cards[collection[col].get_name()]["rarity"]].append(sysf.make_card(collection[col].get_name(), id))
             id += 1
         if col == -1:
             for rarity, row in rows.items():
-                col = sysf.collision(row)
+                col = sysf.rev_collision(row)
+                for card in row:
+                    card.set_scale(1)
+                if col > -1:
+                    row[col].set_scale(1.2)
                 if click and not last_click and col > -1:
                     row.pop(col)
                     break
 
-        sysf.adjust_row(rows["bronze"], 500)
-        sysf.adjust_row(rows["silver"], 300)
-        sysf.adjust_row(rows["gold"], 100)
+        sysf.adjust_row(rows["bronze"], row_height["bronze"])
+        sysf.adjust_row(rows["silver"],  row_height["silver"])
+        sysf.adjust_row(rows["gold"],  row_height["gold"])
 
 
         screen.blit(background, (0, 0))

@@ -130,13 +130,21 @@ def adjust_enemy_board(board):
         pos += card_width + 4*border_margin
 
 def adjust_row(row, height):
-    pos = screen_width/2
-    pos -= (card_width/2 + 2*border_margin)*len(row)
-    pos += 2*border_margin
-    for card in row:
-        card.set_y(height)
-        card.set_x(pos)
-        pos += card_width + 4*border_margin
+    if len(row) > 0:
+        temp_width = card_width
+        temp_margin = border_margin
+        pos = screen_width/2
+        pos -= (temp_width/2 + temp_margin)*len(row)
+        pos += border_margin
+        if pos < 0:
+            temp_margin = (screen_width - temp_width * len(row))/(len(row) * 2)
+            pos = screen_width/2
+            pos -= (temp_width/2 + temp_margin)*len(row)
+            pos += temp_margin
+        for card in row:
+            card.set_y(height)
+            card.set_x(pos)
+            pos += temp_width + 2*temp_margin
 
 def adjust_shop(shopp):
     pos = shop['y']
@@ -175,6 +183,16 @@ def collision(hand):
         if x < cursor[0] < x + card.get_width() and y < cursor[1] < y + card.get_height():
             return i
     return -1
+
+def rev_collision(hand):
+    cursor = pygame.mouse.get_pos()
+    for i in range(len(hand) - 1, -1, -1):
+        card = hand[i]
+        x, y = card.get_dims()
+        if x < cursor[0] < x + card.get_width() and y < cursor[1] < y + card.get_height():
+            return i
+    return -1
+
 
 def end_round(pos):
     if not (end_turn_collider['x1'] <= pos[0] < end_turn_collider['x2']):

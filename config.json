@@ -1,6 +1,6 @@
 {
-  "screen_width": 1920,
-  "screen_height": 1080,
+  "screen_width": 1600,
+  "screen_height": 900,
   "card_width": 150,
   "card_height": 205,
   "border_margin": 10,
@@ -49,14 +49,14 @@
   {
     "x1": 100,
     "x2": 1800,
-    "y1": 800,
+    "y1": 760,
     "y2": 900
   },
   "rarity_rows":
   {
-    "bronze": 500,
-    "silver": 300,
-    "gold": 100
+    "bronze": 460,
+    "silver": 237,
+    "gold": 20
   },
   "scroll_speed": 100
 

@@ -5,13 +5,14 @@ import json
 import random
 import threading
 import queue
+import time
 import sys
 # --- LOCAL IMPORTS ---g
 import sysf
 import net
 import classes as cl
 from menu import font_size
-from sysf import make_card
+from sysf import make_card, enemy_board_height, hand_height, enemy_hand_height
 
 
 def deserialize_board_data(data_list):
@@ -63,9 +64,13 @@ def main(HOST_IP):
     with open("cards.json", "r") as f:
         cards = json.load(f)
 
-    SCREEN_WIDTH = config["screen_width"]
-    SCREEN_HEIGHT = config["screen_height"]
-    mp = SCREEN_WIDTH / 1920
+    screen_width = config["screen_width"]
+    screen_height = config["screen_height"]
+    mp = screen_width / 1920
+    board_height = config["board_height"] * mp
+    enemy_board_height = config['enemy_board_height'] * mp
+    hand_height = config["hand_height"] * mp
+    enemy_hand_height = config["enemy_hand_height"] * mp
     font_size = int(config["font_size"] * mp)
     playfield = config["playfield"]
     for key in playfield.keys():
@@ -105,7 +110,7 @@ def main(HOST_IP):
     pygame.init()
     pygame.font.init()
 
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    screen = pygame.display.set_mode((screen_width, screen_height))
     pygame.display.set_caption("Bombad")
 
     BLACK = (0, 0, 0)
@@ -119,16 +124,22 @@ def main(HOST_IP):
     enemy_turn_end = False
     end_round = False
     enemy_round_end = False
+    last_end_round = False
+    last_end_turn = False
     score = 0
 
     player_power = 0
     money_delta = 0
     enemy_power = 0
     basic_income = 3
-    money = 5
+    money = 50
     id = 1000
     buy_free = 0
     targeting = False
+
+    # --- NEW: Game state FSM ---
+    # Values: "PLANNING", "EXECUTION", "ROUND_RESOLVING"
+    STATE = "PLANNING"
 
     images = sysf.load_and_scale_images('cache/card_imgs')
     background = pygame.image.load('cache/background.png')
@@ -136,9 +147,6 @@ def main(HOST_IP):
     background_pas = pygame.image.load('cache/background_pas.png')
 
     placeholder = cl.Card("card_placeholder", -1, "Description", 0, 0, 0, 1.2)
-
-
-
 
     running = True
     while running:
@@ -160,44 +168,45 @@ def main(HOST_IP):
                 enemy_money = incoming_data.get('money')
                 money += incoming_data.get('money_delta')
 
-            elif incoming_data.get('type') == 'end_turn':
-                enemy_turn_end = True
-
             elif incoming_data.get('type') == 'spellcast':
                 spell_stack.append([incoming_data.get('spell'), incoming_data.get('target')])
                 print(spell_stack)
 
             elif incoming_data.get('type') == 'end_round':
+                # remote indicated they want to end the round
                 enemy_round_end = True
+            elif incoming_data.get('type') == 'end_turn':
+                # remote indicated they finished their turn
+                enemy_turn_end = True
 
         except queue.Empty:
             # No new messages, just continue the game loop
             pass
         # --- END RECEIVING LOGIC ---
+        # =====================================================================
+        #                     STATE MACHINE — MINIMAL FIX
+        # =====================================================================
 
-        if end_round:
-            end_turn = True
-            net.send_end_turn()
-            net.send_end_round()
+        # --- 1) Should we transition from PLANNING → EXECUTION? ---
+        if STATE == "PLANNING":
+            # both players have finished their turn (played something or targeted)
+            if (end_round or end_turn) and (enemy_turn_end or enemy_round_end):
+                STATE = "EXECUTION"
+                print("===> ENTER EXECUTION")
 
-        if end_round and enemy_round_end:
-            player_power = sysf.power_of(board)
-            enemy_power = sysf.power_of(enemy_board)
-            if enemy_power > player_power:
-                score -= 1
-            elif enemy_power < player_power:
-                score += 1
-            board = []
-            end_round = False
-            enemy_round_end = False
-            end_turn = False
-            enemy_turn_end = False
-
-        if enemy_turn_end and end_turn:
+        # --- 2) EXECUTION PHASE (runs EXACTLY once when both are ready) ---
+        if STATE == "EXECUTION":
+            # income
             money += basic_income
+
+            # --- apply effects to PLAYER board ---
             for i, card in enumerate(board):
+                # remove dead cards
                 if card.get_power() < 1:
                     board.pop(i)
+                    continue
+
+                # timed effects
                 if card.get_counter() > 0:
                     card.tick_counter()
                     for act in cards[card.get_name()]["on_count"].keys():
@@ -219,11 +228,10 @@ def main(HOST_IP):
                                 id += 1
                                 deck.remove(value)
 
+            # --- apply SPELL STACK effects ---
             for spell in spell_stack:
                 for act in cards[spell[0]]["on_count"].keys():
                     value = cards[spell[0]]["on_count"][act]
-
-                    print(act, value)
 
                     if act == "dmg":
                         for card in board:
@@ -240,156 +248,198 @@ def main(HOST_IP):
 
             spell_stack = []
 
+            # send results to enemy
+            if not(end_round and enemy_round_end):
+                net.send_board_update(board, len(hand), money, money_delta)
+            money_delta = 0
 
-            net.send_board_update(board, len(hand), money, money_delta)
+            # EXECUTION is complete → wait for round end button
+            STATE = "PLANNING"
             end_turn = False
             enemy_turn_end = False
-            money_delta = 0
+            print("===> EXIT EXECUTION")
+
+        # --- 3) Should we enter ROUND RESOLUTION?
+        if STATE == "PLANNING":
+            if end_round and enemy_round_end:
+                STATE = "ROUND_RESOLVING"
+                print("===> ENTER ROUND RESOLVING")
+
+        # --- 4) ROUND RESOLUTION EXECUTES ONCE ---
+        if STATE == "ROUND_RESOLVING":
+            # who wins
+            player_power = sysf.power_of(board)
+            enemy_power = sysf.power_of(enemy_board)
+            if enemy_power > player_power:
+                score -= 1
+            elif enemy_power < player_power:
+                score += 1
+
+            # cleanup for new round
+            board = []
+            enemy_board = []
+
+            # reset flags
+            end_round = False
+            enemy_round_end = False
+            end_turn = False
+            enemy_turn_end = False
+
+            # new planning phase
+            STATE = "PLANNING"
+            print("===> NEW ROUND START")
+
+        # =====================================================================
+        #                      INPUT / GAMEPLAY (unchanged)
+        # =====================================================================
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
 
         m_pos = pygame.mouse.get_pos()
-
         sysf.adjust_hand(hand)
-
         col = int(sysf.collision(hand))
+
         for card in hand:
             if card.get_status() != "drag":
                 card.set_scale(1)
         if col > -1:
             hand[col].set_scale(1.2)
 
-        if end_turn == False:
-            if targeting == True:
-                if pygame.mouse.get_pressed()[0] == 1:
-                    col = int(sysf.collision(board))
-                    if col > -1:
-                        spell_stack[-1][1] = board[col].get_index()
-                        targeting = False
-                    else:
-                        col = int(sysf.collision(enemy_board))
+        if STATE == "PLANNING":
+            if end_turn == False and end_round == False:
+
+                # --- targeting mechanic ---
+                if targeting:
+                    if pygame.mouse.get_pressed()[0] == 1:
+                        col = int(sysf.collision(board))
                         if col > -1:
-                            net.send_spell(spell_stack[-1][0], enemy_board[col].get_index())
+                            spell_stack[-1][1] = board[col].get_index()
                             targeting = False
+                            end_turn = True
+                        else:
+                            col = int(sysf.collision(enemy_board))
+                            if col > -1:
+                                net.send_spell(spell_stack[-1][0], enemy_board[col].get_index())
+                                targeting = False
+                                end_turn = True
 
-                    if col > -1:
-                        end_turn = True
+                # --- dragging cards from hand ---
+                elif pygame.mouse.get_pressed()[0] == 1 and (col > -1 or dragged != None):
+                    if dragged == None:
+                        dragged = col
+                    hand[dragged].set_status("drag")
+                    if drag_x == 0 and drag_y == 0:
+                        drag_x, drag_y = hand[dragged].get_dims()[0] - m_pos[0], hand[dragged].get_dims()[1] - m_pos[1]
+                    hand[dragged].set_x(m_pos[0] + drag_x)
+                    hand[dragged].set_y(m_pos[1] + drag_y)
 
+                    # placeholder logic
+                    if playfield['x1'] < m_pos[0] < playfield['x2'] and playfield['y1'] < m_pos[1] < playfield['y2']:
+                        last_placeholder = placeholder_on
+                        if placeholder_on == None:
+                            board.append(placeholder)
+                            last_placeholder = -1
+                            placeholder_on = 0
 
-            elif pygame.mouse.get_pressed()[0] == 1 and (col > -1 or dragged != None):
-                # ... (Dragging logic - Placeholder manipulation)
-                if dragged == None:
-                    dragged = col
-                hand[dragged].set_status("drag")
-                if drag_x == 0 and drag_y == 0:
-                    drag_x, drag_y = hand[dragged].get_dims()[0] - m_pos[0], hand[dragged].get_dims()[1] - m_pos[1]
-                hand[dragged].set_x(m_pos[0] + drag_x)
-                hand[dragged].set_y(m_pos[1] + drag_y)
+                        if m_pos[0] < board[0].get_dims()[0]:
+                            placeholder_on = 0
+                        elif m_pos[0] > board[-1].get_dims()[0]:
+                            placeholder_on = len(board) - 1
+                        else:
+                            for i in range(len(board) - 1):
+                                if board[i].get_dims()[0] < m_pos[0] < board[i + 1].get_dims()[0]:
+                                    placeholder_on = i
+                                    break
 
-                # Placeholder insertion/removal logic...
-                if playfield['x1'] < m_pos[0] < playfield['x2'] and playfield['y1'] < m_pos[1] < playfield['y2']:
-                    last_placeholder = placeholder_on
-                    if placeholder_on == None:
-                        board.append(placeholder)
-                        last_placeholder = -1
-                        placeholder_on = 0
+                        try:
+                            board.pop(last_placeholder)
+                        except IndexError:
+                            if placeholder_on is not None:
+                                board.pop(placeholder_on)
 
-                    # Logic to determine new placeholder position (omitted for brevity)
-                    if m_pos[0] < board[0].get_dims()[0]:
-                        placeholder_on = 0
-                    elif m_pos[0] > board[-1].get_dims()[0]:
-                        placeholder_on = len(board) - 1
+                        board.insert(placeholder_on, placeholder)
                     else:
-                        for i in range(len(board) - 1):
-                            if board[i].get_dims()[0] < m_pos[0] < board[i + 1].get_dims()[0]:
-                                placeholder_on = i
-                                break
-
-                    # Safely handle popping and inserting placeholder
-                    try:
-                        board.pop(last_placeholder)
-                    except IndexError:
-                        if placeholder_on is not None:
+                        if placeholder_on != None:
                             board.pop(placeholder_on)
+                        placeholder_on = None
 
-                    board.insert(placeholder_on, placeholder)
-                else:
-                    if placeholder_on != None:
+                # --- releasing dragged card ---
+                elif dragged != None:
+                    if playfield['x1'] < m_pos[0] < playfield['x2'] and playfield['y1'] < m_pos[1] < playfield['y2'] and placeholder_on != None:
+                        hand[dragged].set_status("board")
+                        hand[dragged].set_scale(1.2)
                         board.pop(placeholder_on)
-                    placeholder_on = None
 
-            elif dragged != None:
-                if playfield['x1'] < m_pos[0] < playfield['x2'] and playfield['y1'] < m_pos[1] < playfield['y2'] and placeholder_on != None:
-                    # --- Card successfully placed on board (BOARD CHANGED) ---
-                    hand[dragged].set_status("board")
-                    hand[dragged].set_scale(1.2)
-                    board.pop(placeholder_on)
-                    if cards[hand[dragged].get_name()]["targeting"] == 1:
-                        spell_stack.append([hand[dragged].get_name(), -1])
-                        targeting = True
-                    elif cards[hand[dragged].get_name()]["targeting"] == 2:
-                        spell_stack.append([hand[dragged].get_name(), -1])
-                        end_turn = True
+                        if cards[hand[dragged].get_name()]["targeting"] == 1:
+                            spell_stack.append([hand[dragged].get_name(), -1])
+                            targeting = True
+                        elif cards[hand[dragged].get_name()]["targeting"] == 2:
+                            spell_stack.append([hand[dragged].get_name(), -1])
+                            end_turn = True
+                        else:
+                            end_turn = True
+
+                        board.insert(placeholder_on, hand[dragged])
+                        hand.pop(dragged)
+                        placeholder_on = None
+
                     else:
-                        end_turn = True
-                    board.insert(placeholder_on, hand[dragged])
-                    hand.pop(dragged)
-                    placeholder_on = None
+                        hand[dragged].set_status("hand")
+                        if placeholder_on != None:
+                            board.pop(placeholder_on)
+                        placeholder_on = None
 
-                else:
-                    # Card returned to hand
-                    hand[dragged].set_status("hand")
-                    if placeholder_on != None:
-                        board.pop(placeholder_on)
-                    placeholder_on = None
+                    dragged = None
+                    drag_y = 0
+                    drag_x = 0
 
-                dragged = None
-                drag_y = 0
-                drag_x = 0
+                # --- shop clicking ---
+                col = sysf.collision(shop)
+                if col > -1 and pygame.mouse.get_pressed()[0] == 1 and last_left_mb_state == False:
+                    if money - shop[col].get_cost() >= 0:
+                        hand.append(shop[col])
+                        if buy_free == 0:
+                            money -= shop[col].get_cost()
+                        else:
+                            buy_free -= 1
+                        if len(deck) > 0:
+                            shop[col] = sysf.make_card(deck[-1], id)
+                            deck.pop()
+                            id += 1
+                        else:
+                            shop.pop(col)
 
-            col = sysf.collision(shop)
-            if col > -1 and pygame.mouse.get_pressed()[0] == 1 and last_left_mb_state == False:
-                if money - shop[col].get_cost() >= 0:
-                    hand.append(shop[col])
-                    if buy_free == 0:
-                        money -= shop[col].get_cost()
-                    else:
-                        buy_free -= 1
-                    if len(deck) > 0:
-                        # Assuming this is a simple "buy" action that doesn't affect the board list itself
-                        shop[col] = sysf.make_card(deck[-1], id)
-                        deck.pop()
-                        id += 1
-                    else:
-                        shop.pop(col)
+                # --- round end button ---
+                if sysf.end_round(m_pos) and pygame.mouse.get_pressed()[0] == 1 and last_left_mb_state == False:
+                    end_round = True
 
-            if sysf.end_round(m_pos) and pygame.mouse.get_pressed()[0] == 1 and last_left_mb_state == False:
-                end_round = True
-
-        # --- 3. SENDING LOGIC (Check and send own board updates) ---
-        # Current state of the board, represented by a list of card IDs (excluding placeholder)
-
-        if end_turn == True:
-            # The board state has changed (card placed/removed/rearranged).
+        # --- SEND local state changes to remote (edge-detection) ---
+        if end_round and not last_end_round:
+            net.send_end_round()
+        if end_turn and not last_end_turn:
             net.send_end_turn()
-        # --- END SENDING LOGIC ---
+
+        last_end_round = end_round
+        last_end_turn = end_turn
+
+        # =====================================================================
+        #                     RENDERING (identical)
+        # =====================================================================
 
         sysf.adjust_shop(shop)
         sysf.adjust_board(board)
         sysf.adjust_enemy_board(enemy_board)
 
-        # Note: sysf.power_of() returns a string, so direct use in render() is fine
         player_power = sysf.power_of(board)
         enemy_power = sysf.power_of(enemy_board)
 
         screen.blit(background, (0, 0))
-        if end_turn == True:
+        if end_turn == True or end_round == True:
             screen.blit(background_pas, (0, 0))
 
         font = pygame.font.SysFont('Arial', font_size)
-
         text_surface = font.render(player_power, True, BLACK)
         screen.blit(text_surface, (power_dims["ally_x"], power_dims["ally_y"]))
 
@@ -399,11 +449,10 @@ def main(HOST_IP):
         text = font.render(str(money), True, GOLD)
         screen.blit(text, (money_dims['x'], money_dims['y']))
 
-        text = font.render(f"Score: {str(score)}", True, BLACK)
+        text = font.render(f"Score: {str(score)}, {end_turn}, {enemy_turn_end}, {end_round}, {enemy_round_end}", True, BLACK)
         screen.blit(text, (score_dims['x'], score_dims['y']))
 
         for card in board + enemy_board + hand:
-            # Skip drawing the placeholder if it's not currently being hovered/dragged over the board
             if card.get_name() == "card_placeholder" and card not in board:
                 continue
 
@@ -424,5 +473,4 @@ def main(HOST_IP):
             screen.blit(card_back, i)
 
         pygame.display.flip()
-
         last_left_mb_state = pygame.mouse.get_pressed()[0]

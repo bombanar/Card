@@ -8,6 +8,12 @@ def main():
     with open('config.json', 'r') as f:
         config = json.load(f)
 
+    with open('cache/cache_info.json', 'r') as f:
+        cache_info = json.load(f)
+
+    if cache_info['loaded_width'] == config['screen_width']:
+        return 0
+
     mp = config['screen_width']/1920
     card_width = mp*config['card_width']
     card_height = mp*config['card_height']
@@ -44,3 +50,9 @@ def main():
         resized_img = img.resize(new_size, Image.LANCZOS)
 
         resized_img.save(f'cache//{key}.png')
+
+    with open('cache/cache_info.json', 'w') as f:
+        temp = {'loaded_width': config['screen_width']}
+        json.dump(temp, f)
+
+    return 0
